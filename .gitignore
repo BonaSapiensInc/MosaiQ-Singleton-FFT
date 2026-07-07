@@ -1,0 +1,16 @@
+# Build artifacts
+build/
+.cache/
+*.o
+*.a
+*.so
+*.dylib
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*~
+
+# macOS
+.DS_Store

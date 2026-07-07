@@ -1,0 +1,4 @@
+-std=c++20
+-Isrc
+-Ibuild/_deps/catch2-src/src/catch2/..
+-Ibuild/_deps/catch2-build/generated-includes
