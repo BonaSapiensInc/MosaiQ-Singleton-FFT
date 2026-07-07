@@ -3,6 +3,7 @@
 ![C++20](https://img.shields.io/badge/C++-20-blue.svg)
 ![CMake](https://img.shields.io/badge/CMake-3.20+-064F8C.svg)
 ![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.placeholder.svg)](https://doi.org/10.5281/zenodo.placeholder)
 
 A modernized, strictly deterministic C++20 implementation of the mixed-radix Cooley–Tukey fast Fourier transform. This library is the Bona Sapiens reference engine for in-place spectral analysis: factorization, butterfly stages, and prime-radix kernels are implemented with explicit compile-time structure and zero tolerance for undefined behavior at API boundaries.
 
@@ -118,6 +119,27 @@ The test binary `mosaiq_singleton_fft_tests` (Catch2 v3) exercises:
 - Impulse-response preservation
 
 Strict warnings are enforced (`-Wall -Wextra -Wpedantic -Werror` on GCC/Clang; `/W4 /WX` on MSVC).
+
+---
+
+## Citation
+
+If you use `MosaiQ-Singleton-FFT` in scientific research, cite the archived release by its Zenodo DOI. This assigns a permanent, versioned identifier to the software artifact and satisfies reproducibility requirements for peer-reviewed publication.
+
+Replace `placeholder` in the DOI below once Zenodo registration is complete and a GitHub release (e.g. `v0.1.0`) has been minted.
+
+```bibtex
+@software{mosaiq_singleton_fft,
+  author       = {Kim, In-Gee},
+  title        = {MosaiQ-Singleton-FFT: Modern C++20 Mixed-Radix FFT Engine},
+  month        = jul,
+  year         = {2026},
+  publisher    = {Zenodo},
+  version      = {v0.1.0},
+  doi          = {10.5281/zenodo.placeholder},
+  url          = {https://doi.org/10.5281/zenodo.placeholder}
+}
+```
 
 ---
 
