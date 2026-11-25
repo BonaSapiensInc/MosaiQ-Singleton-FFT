@@ -1,14 +1,20 @@
 # MosaiQ-Singleton-FFT: Complex Mixed-Radix Algorithm Structure
 
-**Status:** Architecture Specification (v1.0)  
-**License Holder:** Bona Sapiens, Inc.  
-**Scope:** Recursive Cooley–Tukey mixed-radix decimation engine and compile-time prime radix butterfly expansion for the complex in-place FFT.
+**Status:** Architecture Specification (v2.0)  
+**License Holder:** BonaSapiens Inc.  
+**Scope:** Non-recursive, true in-place Singleton mixed-radix FFT over the 61-smooth prime radix domain.
 
 ---
 
 ## 1. Architectural Overview
 
-`MosaiQ-Singleton-FFT` implements an in-place complex fast Fourier transform over arbitrary composite lengths \(N\) whose prime factors do not exceed 61. The transform decomposes \(N\) into a stage sequence, recursively decimates the input into sub-DFTs, and recombines partial results through radix-\(P\) butterfly kernels at each stage.
+`MosaiQ-Singleton-FFT` implements an in-place complex fast Fourier transform over composite lengths \(N\) whose prime factors do not exceed 61. The engine is a faithful C++20 translation of R. C. Singleton (1968) / I. G. Kim (2006, 2012) `cfft.F`:
+
+1. Symmetric square / square-free factorization of \(N\).
+2. Non-recursive mixed-radix butterfly passes (radices 2, 3, 4, 5, and generic odd primes through 61).
+3. Two-stage cycle-following permutation restoring natural order.
+
+There is **no** recursive Cooley–Tukey / KissFFT stage stack and **no** \(O(N)\) data scratch buffer. Auxiliary workspace is bounded by \(O(\mathrm{maxf} + \mathrm{maxp})\).
 
 The forward transform is defined as
 
@@ -18,17 +24,9 @@ X_k = \sum_{n=0}^{N-1} x_n \exp\!\left(-\frac{2\pi i\, kn}{N}\right).
 
 The inverse transform applies the conjugate exponential and scales by \(1/N\).
 
-### 1.1 Departure from Legacy Digit-Reversal Pipelines
+### 1.1 Why Not Digit-Reversal + Recursive Decimation
 
-Naive Singleton-style implementations that prepend a mixed-radix digit-reversal permutation and then execute iterative DIT stages exhibit a structural failure when radix-4 and radix-2 stages are interleaved. For \(N = 128\), a factorization such as \([4, 4, 2, 2, 2]\) induces a digit-reversal base that is not equivalent to binary bit-reversal; the resulting index permutation is incorrect, and the forward–inverse round-trip diverges.
-
-`MosaiQ-Singleton-FFT` eliminates this class of failure by adopting a **recursive decimation schedule** (KissFFT-style `kf_work` semantics):
-
-1. Recursively partition the input into \(P\) sub-transforms of size \(M\) for stage radix \(P\).
-2. Apply stage twiddle factors to butterfly legs.
-3. Recombine via an explicit radix-\(P\) kernel.
-
-No global bit-reversal or mixed-radix digit-reversal pass is required. Complexity remains \(O(N \log N)\).
+Naive digit-reversal DIT pipelines and KissFFT-style recursive `kf_work` schedules either mis-handle interleaved radix-4/2 factorizations or allocate \(O(N)\) scratch. The Singleton two-stage permutation (square factors, then square-free cycle following) is the historically correct in-place solution retained by this engine.
 
 ---
 
@@ -36,166 +34,142 @@ No global bit-reversal or mixed-radix digit-reversal pass is required. Complexit
 
 ```mermaid
 flowchart TD
-    A["Public API: fft() / ifft()<br/>std::span&lt;std::complex&lt;T&gt;&gt;"] --> B["Stage factorization<br/>build_stage_factors()"]
-    B --> C["Recursive core<br/>transform_pass()"]
-    C --> D["Butterfly router<br/>butterfly_dispatch()"]
-    D --> E["Radix 2<br/>butterfly_radix2() + PrimeRadix&lt;T,2&gt;"]
-    D --> F["Radix 3..61<br/>butterfly_prime_radix()"]
-    F --> G["Kernel dispatch<br/>dispatch_prime_radix()"]
-    G --> H["PrimeRadix&lt;T,P&gt;<br/>explicit unrolled DFT"]
-    D --> I["Unsupported radix<br/>butterfly_generic()"]
+    A["Public API: fft() / ifft()<br/>std::span&lt;std::complex&lt;T&gt;&gt;"] --> B["61-smooth domain gate<br/>analyze_61_smooth()"]
+    B --> C["True in-place kernel<br/>singleton_cfft_strided()"]
+    C --> D["Symmetric factorization<br/>nfac[] square / square-free"]
+    D --> E["Non-recursive butterflies<br/>radix 2 / 3 / 4 / 5 / odd"]
+    E --> F["Stage 1 permutation<br/>square factors"]
+    F --> G["Stage 2 permutation<br/>square-free cycles"]
 ```
 
 | Module | File | Responsibility |
 |--------|------|----------------|
 | Public API | `src/SingletonFFT.hpp` | `fft()`, `ifft()`, `factorize()`, `factorize_ct<N>()` |
-| Transform engine | `src/SingletonFFT.cpp` | Twiddle table, recursive passes, butterfly orchestration |
-| Prime radix kernels | `src/detail/PrimeRadix.hpp` | Template-unrolled \(P\)-point DFT butterflies |
-| Validation | `tests/test_fft.cpp` | Factorization, round-trip, impulse tests |
+| Transform engine | `src/SingletonFFT.cpp` | `cfft.F` translation, workspace bounds, butterflies, permutation |
+| 61-smooth predicate | `src/detail/PrimeRadix.hpp` | `is_supported_radix()`, `k_max_prime_radix` |
+| Validation | `tests/test_fft.cpp` | Factorization, round-trip, domain rejection |
+| Legacy Fortran | `docs/legacy/cfft.F`, `primfact.F` | Historical provenance |
 
 ---
 
 ## 3. Factorization Subsystem
 
-Two factorization paths exist: one for the transform engine, one for the public Singleton-style API.
+### 3.1 Engine Internal Factorization (`nfac`)
 
-### 3.1 Runtime Stage Factors (`build_stage_factors`)
-
-The active FFT path builds a KissFFT-compatible stage buffer:
+Inside `singleton_cfft_strided`, factors follow Singleton's symmetric layout:
 
 \[
-[P_0,\, M_0,\, P_1,\, M_1,\, \ldots,\, P_{S-1},\, M_{S-1}]
+[\underbrace{\text{square factors}}_{\text{forward}},\ \underbrace{\text{square-free}}_{\text{middle}},\ \underbrace{\text{square factors}}_{\text{reversed}}]
 \]
 
-where \(P_i\) is the stage radix and \(M_i\) is the remaining sub-length after division. Radices are selected greedily (powers of 4, then 2, then odd primes up to \(\lfloor\sqrt{N}\rfloor\), then the residual factor).
+Powers of 16 contribute radix-4 entries; odd squares \(j^2\) contribute odd radices; residual primes fill the square-free middle.
 
 ### 3.2 Public Factorizer (`factorize` / `factorize_ct`)
 
-The exported `factorize()` and `consteval factorize_ct<N>()` implement a Singleton-oriented decomposition:
+The exported `factorize()` and `consteval factorize_ct<N>()` implement a Singleton-oriented decomposition for API consumers:
 
-- Extract factors of 4 while \((N/4) \neq 2\) (avoids the \([4, 2]\) trap that breaks radix-4 extraction).
+- Extract factors of 4 while \((N/4) \neq 2\).
 - Extract remaining factors of 2.
 - Trial-divide odd primes from 3 upward.
-- Emit any residual prime \(\leq 61\).
+- Emit any residual prime \(\leq 61\); reject unsupported primes.
 
-`ConstFactorization` stores compile-time results in a fixed `std::array` with zero heap allocation.
-
-**Example:** \(N = 442 = 2 \times 13 \times 17\) yields factors `[2, 13, 17]`, exercising expanded prime radices 13 and 17 in validation.
+**Example:** \(N = 442 = 2 \times 13 \times 17\) yields `[2, 13, 17]`.
 
 ---
 
-## 4. Recursive Transform Core (`transform_pass`)
+## 4. True In-Place Kernel (`singleton_cfft_strided`)
 
-At each stage with radix \(P\) and group count \(M\):
+### 4.1 Workspace Bounds (I. G. Kim, 2012)
 
-1. **Base case** (\(M = 1\)): copy \(P\) decimated input samples into the output buffer with stride advancement.
-2. **Recursive case** (\(M > 1\)): invoke `transform_pass` on \(P\) sub-blocks, each of length \(M\), with stride multiplied by \(P\).
-3. **Butterfly recombination**: call `butterfly_dispatch` on the \(P \times M\) output block.
+`analyze_61_smooth(N)` computes:
 
-Twiddle factors are precomputed once per transform:
+| Symbol | Meaning |
+|--------|---------|
+| `maxn` | Total prime-factor count (odd Singleton invariant) |
+| `maxf` | Largest prime factor (at least 4 for radix-4 workspace) |
+| `maxp` | Product of square-free prime factors |
 
-\[
-W_N^{\,k} = \exp\!\left(\frac{\mathrm{sign} \cdot 2\pi i\, k}{N}\right), \quad k = 0, \ldots, N-1
-\]
+Allocated auxiliaries: `nfac`, `at`, `bt`, `ck`, `sk`, `np` — all \(O(\mathrm{maxf} + \mathrm{maxp})\).
 
-with \(\mathrm{sign} = -1\) for forward and \(+1\) for inverse.
+### 4.2 Strided Multivariate Form
 
-In-place operation uses a scratch buffer of length \(N\); results are copied back to the caller's span after the recursive pass completes.
+The kernel retains Singleton's `(ntot, n, nspan)` signature. The public 1-D API calls:
 
----
-
-## 5. Prime Radix Butterfly Expansion (`PrimeRadix.hpp`)
-
-The **Crucial Lemma** of this engine: all supported radices through 61 are handled by explicitly instantiated template kernels, not by a runtime \(O(P^2)\) loop with unknown \(P\).
-
-### 5.1 Supported Radices
-
-\[
-\{2,\, 3,\, 4,\, 5,\, 7,\, 11,\, 13,\, 17,\, 19,\, 23,\, 29,\, 31,\, 37,\, 41,\, 43,\, 47,\, 53,\, 59,\, 61\}
-\]
-
-### 5.2 Template Structure
-
-```cpp
-template <std::floating_point T, std::size_t P>
-struct PrimeRadix {
-    static void apply(std::span<std::complex<T>, P> x, int sign) noexcept;
-};
+```text
+singleton_cfft_strided(data, N, N, N, sign)
 ```
 
-For general \(P\), `apply` evaluates the unrolled \(P\)-point DFT:
+Future 3-D Brillouin / Keldysh grids may invoke three strided passes without transposition.
 
-\[
-Y_k = \sum_{j=0}^{P-1} x_j \cdot \exp\!\left(\frac{\mathrm{sign} \cdot 2\pi i\, jk}{P}\right).
-\]
+### 4.3 Butterfly Passes
 
-`PrimeRadix<T, 2>` is specialized to a single add/subtract pair (no trigonometric calls).
+| Radix | Path |
+|-------|------|
+| 2 | Pairwise add/sub with rotation-factor recurrence |
+| 3 | Hard-coded trig constants (`s120`) |
+| 4 | Four-point butterfly with signed conjugacy |
+| 5 | Hard-coded `c72` / `s72` combinations |
+| Odd \(p \le 61\) | Recurrence tables `ck[]` / `sk[]` with truncation renormalization |
 
-`dispatch_prime_radix()` performs a compile-time-resolved `switch` over \(P\), binding each case to `PrimeRadix<T, P>::apply` with a fixed-extent `std::span<std::complex<T>, P>`.
+### 4.4 Two-Stage Permutation
 
-### 5.3 Stage Butterfly with Twiddles (`butterfly_prime_radix`)
+1. **Square factors:** Indexed swaps via `np[]` derived from `nfac`.
+2. **Square-free factors:** Cycle following with temporary `at` / `bt` of length \(\le \mathrm{maxf}\).
 
-For each butterfly group \(g\) at stage radix \(P\):
+---
 
-1. **Gather** \(P\) samples at stride \(M\): `scratch[q] = output[g + q·M]`.
-2. **Twiddle** legs \(q = 1, \ldots, P-1\):
-   \[
-   \texttt{scratch}[q] \leftarrow \texttt{scratch}[q] \cdot W_N^{\,(\texttt{stride} \cdot g \cdot q)}
-   \]
-3. **Apply** `dispatch_prime_radix(scratch, P, sign)`.
-4. **Scatter** results back to `output[g + q·M]`.
+## 5. Domain Firewall (`PrimeRadix.hpp`)
 
-Radix 2 uses `butterfly_radix2`, which multiplies the odd leg by a running twiddle index and delegates the pairwise sum/difference to `PrimeRadix<T, 2>`.
+`PrimeRadix.hpp` no longer contains template butterflies. It exposes only:
 
-### 5.4 Generic Fallback
+- `is_supported_radix(radix)` — membership test for \(\{2,3,4,5,7,\ldots,61\}\)
+- `k_max_prime_radix = 61`
 
-`butterfly_generic` implements the KissFFT `kf_bfly_generic` twiddle accumulation for radices outside the supported set. It is retained as a structural safety net; all lengths validated in the test suite factor exclusively into supported radices.
+Lengths with a prime factor \(> 61\) throw `std::invalid_argument` at the API boundary.
 
 ---
 
 ## 6. Bona Sapiens Determinism Contract
 
-The following invariants are enforced at compile time and verified by the test suite.
-
 | Invariant | Enforcement |
 |-----------|-------------|
-| **Span-only memory interface** | `fft()` and `ifft()` accept `std::span<std::complex<T>>` exclusively. |
-| **Zero raw pointers in butterfly kernels** | `PrimeRadix::apply` operates on `std::span<std::complex<T>, P>`. |
-| **Type safety** | Scalar type `T` is constrained by the `FloatingPoint` concept (`std::floating_point<T>`). |
-| **Forward convention** | \(\exp(-2\pi i kn/N)\). |
-| **Inverse convention** | \(\exp(+2\pi i kn/N)\) with exact \(1/N\) normalization. |
-| **Numerical tolerance** | Double-precision round-trip error \(< 10^{-12}\) for \(N \in \{64, 128, 81, 442\}\). |
-
-Internal scratch buffers (`std::vector`, `std::array`) are function-local or stack-allocated; no `new`/`delete` appears in the transform path.
+| **Span-only public interface** | `fft()` / `ifft()` accept `std::span<std::complex<T>>` |
+| **True in-place kernel** | No \(O(N)\) data scratch; workspace \(O(\mathrm{maxf}+\mathrm{maxp})\) |
+| **Type safety** | `FloatingPoint` concept (`std::floating_point<T>`) |
+| **61-smooth domain** | Reject primes \(> 61\) |
+| **Numerical tolerance** | Double round-trip error \(< 10^{-12}\) for \(N \in \{61, 64, 81, 128, 210, 442, 1980\}\) |
 
 ---
 
 ## 7. Validation Matrix
 
-| Test | Length | Radices Engaged | Tolerance |
-|------|--------|-----------------|-----------|
-| Power of two | 64, 128 | 2, 4 | \(10^{-12}\) (double) |
-| Power of three | 81 | 3 | \(10^{-12}\) (double) |
-| Mixed prime | 442 | 2, 13, 17 | \(10^{-12}\) (double) |
-| Float smoke | 442 | 2, 13, 17 | \(10^{-5}\) (float) |
-| Impulse | 61 | 61 | \(10^{-12}\) (double) |
+| Test | Length | Focus | Tolerance |
+|------|--------|-------|-----------|
+| Power of two | 64, 128 | Radix 2/4 | \(10^{-12}\) |
+| Power of three | 81 | Radix 3 | \(10^{-12}\) |
+| Mixed prime | 442 | 2×13×17 | \(10^{-12}\) |
+| Max prime | 61 | Radix 61 | \(10^{-12}\) |
+| Square-free product | 210 | 2×3×5×7 | \(10^{-12}\) |
+| Mixed square/square-free | 1980 | 4×9×5×11 | \(10^{-12}\) |
+| Domain reject | 67 | Unsupported prime | exception |
 
 ---
 
 ## 8. Legacy Provenance
 
-Historical source material — including Richard C. Singleton's original mixed-radix FFT publications, Fortran reference implementations, and related lecture notes — must be placed under:
+Historical Fortran sources are archived under `docs/legacy/`:
 
-```
-docs/legacy/
-```
+- `cfft.F` — Singleton / Kim complex FFT driver
+- `primfact.F` — Prime factorization routine
 
-**Action required (manual):** Copy legacy PDFs, scanned papers, and reference source archives into `docs/legacy/` from the predecessor repository or personal archive. Do not commit copyrighted material without license verification. Filename convention: `SINGLETON_<YEAR>_<SHORT_TITLE>.pdf`.
+The 2012 journal article is cited by DOI only (PDF not redistributed in this repository):
+
+[https://doi.org/10.4283/JKMS.2012.22.2.033](https://doi.org/10.4283/JKMS.2012.22.2.033)
 
 ---
 
 ## 9. References
 
-- R. C. Singleton, "Mixed Radix Fast Fourier Transforms," in *Programs for Digital Signal Processing*, IEEE Press, 1979.
-- M. Borgerding, KissFFT: mixed-radix recursive FFT (reference decimation schedule).
-- Bona Sapiens, Inc., `README.md` — build, integration, and public API summary.
+- R. C. Singleton, multivariate mixed-radix FFT, Stanford Research Institute, 1968.
+- I. G. Kim, *J. Korean Magn. Soc.* **22**(2), 33 (2012). DOI: [10.4283/JKMS.2012.22.2.033](https://doi.org/10.4283/JKMS.2012.22.2.033).
+- BonaSapiens Inc., `README.md` — dual license (AGPLv3 / commercial), citation, and ecosystem notes.

@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <complex>
 #include <random>
+#include <stdexcept>
 #include <type_traits>
 #include <span>
 #include <vector>
@@ -112,4 +113,26 @@ TEST_CASE("impulse response preserves unit energy", "[fft][impulse]") {
         REQUIRE(impulse[index].real() == Catch::Approx(0.0).margin(k_double_tolerance));
         REQUIRE(impulse[index].imag() == Catch::Approx(0.0).margin(k_double_tolerance));
     }
+}
+
+TEST_CASE("61-smooth domain boundary coverage", "[fft][61-smooth]") {
+    SECTION("max prime radix: N = 61") {
+        require_round_trip<double>(61U, 0x61ULL);
+    }
+
+    SECTION("square-free product: N = 2*3*5*7 = 210") {
+        require_round_trip<double>(210U, 0xD210ULL);
+    }
+
+    SECTION("mixed square and square-free: N = 4*9*5*11 = 1980") {
+        require_round_trip<double>(1980U, 0x1980ULL);
+    }
+}
+
+TEST_CASE("unsupported prime beyond 61 is rejected", "[fft][domain]") {
+    std::vector<std::complex<double>> signal(67U, {0.0, 0.0});
+    signal.front() = {1.0, 0.0};
+
+    REQUIRE_THROWS_AS(mosaiq::fft::fft(std::span{signal}), std::invalid_argument);
+    REQUIRE_THROWS_AS(mosaiq::fft::factorize(67U), std::invalid_argument);
 }

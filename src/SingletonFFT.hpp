@@ -39,7 +39,7 @@ struct ConstFactorization {
     }
 };
 
-/// Runtime factorizer: decomposes \f$N\f$ into Singleton-style radices.
+/// Runtime factorizer: decomposes \f$N\f$ into 61-smooth Singleton radices.
 [[nodiscard]] Factorization factorize(std::size_t n);
 
 namespace detail {
@@ -89,12 +89,12 @@ template <std::size_t N>
     return detail::factorize_length<N>();
 }
 
-/// In-place forward mixed-radix FFT (Singleton / Cooley-Tukey).
+/// True in-place non-recursive forward mixed-radix Singleton FFT (61-smooth domain).
 /// Convention: \f$X_k = \sum_{n=0}^{N-1} x_n \exp(-2\pi i kn / N)\f$.
 template <FloatingPoint T>
 void fft(std::span<std::complex<T>> data);
 
-/// In-place inverse mixed-radix FFT with \f$1/N\f$ normalization.
+/// True in-place non-recursive inverse mixed-radix Singleton FFT with \f$1/N\f$ normalization.
 template <FloatingPoint T>
 void ifft(std::span<std::complex<T>> data);
 

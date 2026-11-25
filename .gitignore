@@ -5,6 +5,11 @@ build/
 *.a
 *.so
 *.dylib
+compile_commands.json
+
+# Local clangd flags (do not ship)
+**/compile_flags.txt
+src/detail/compile_flags.txt
 
 # IDE
 .idea/

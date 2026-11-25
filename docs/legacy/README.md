@@ -6,24 +6,20 @@ This directory holds historical provenance material for the MosaiQ-Singleton-FFT
 
 | File | Description |
 |------|-------------|
-| `JKoreanMagSoc_22_33_(2012).pdf` | In-Gee Kim, *J. Korean Magn. Soc.* 22(2), 33 (2012) — Singleton mixed-radix FFT with dynamic memory allocation (migrated from `../legacy_singleton/`) |
-| `cfft.F` | Legacy complex FFT driver (Fortran) |
-| `primfact.F` | Legacy prime factorization routine (Fortran) |
+| `cfft.F` | Legacy complex FFT driver (Fortran; Singleton / I. G. Kim) |
+| `primfact.F` | Legacy prime factorization routine (Fortran; I. G. Kim) |
 
-## Migration Instructions
+## Journal Article (DOI only)
 
-Legacy material from `../legacy_singleton/` has been migrated. Additional documents may be added as follows:
+The 2012 journal PDF is **not** redistributed in this repository. Cite and retrieve the official publication via:
 
-| Source | Suggested Destination |
-|--------|----------------------|
-| Singleton (1979) IEEE DSP Program paper | `SINGLETON_1979_MIXED_RADIX_FFT.pdf` |
-| Original Fortran Y / F90 translations | `legacy/fortran/` |
-| In-Gee Kim Singleton-FFT repository notes | `legacy/ingeekim-singleton-fft/` |
+- I. G. Kim, *J. Korean Magn. Soc.* **22**(2), 33 (2012)
+- DOI: [https://doi.org/10.4283/JKMS.2012.22.2.033](https://doi.org/10.4283/JKMS.2012.22.2.033)
 
 ## Policy
 
-- Verify copyright and redistribution rights before committing PDFs.
-- Prefer immutable filenames with year prefix for traceability.
+- Prefer immutable filenames with year prefix for any future text archives.
 - Do not store credentials, build artifacts, or binary object files here.
+- Do not commit publisher PDFs; link official DOIs instead.
 
 See `docs/02_SINGLETON_CFFT_STRUCTURE.md` §8 for the architectural context.
